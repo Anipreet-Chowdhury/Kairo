@@ -1,0 +1,39 @@
+name: API CI
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  quality:
+    name: API Quality Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --project apps/api --locked
+
+      - name: Run tests
+        run: uv run --project apps/api pytest tests/api
+
+      - name: Run linter
+        run: uv run --project apps/api ruff check apps/api tests/api
+
+      - name: Check formatting
+        run: uv run --project apps/api ruff format --check apps/api tests/api
