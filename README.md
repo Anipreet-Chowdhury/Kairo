@@ -59,7 +59,7 @@ Kairo is designed as a modular AI-enabled web platform consisting of a React
 frontend, FastAPI application layer, asynchronous workers, AI/ML services,
 operational and analytical data stores, and external integrations.
 
-![Kairo System Architecture](Images/System%20Architecture.png)
+![Kairo System Architecture](./Images/SystemArchitecture.png)
 
 ### Major Components
 
@@ -105,7 +105,7 @@ Kairo combines user-provided information, course documents, calendar
 availability, skill information, and historical data to generate actionable
 work plans.
 
-![Kairo Data Flow](Images/Data%20Flow%20Diagram.png)
+![Kairo Data Flow](./Images/DataFlowDiagram.png)
 
 The platform supports three primary user experiences:
 
