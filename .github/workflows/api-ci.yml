@@ -30,6 +30,8 @@ jobs:
         run: uv sync --project apps/api --locked
 
       - name: Run tests
+        env:
+          DATABASE_URL: postgresql+asyncpg://test:test@localhost:5432/test
         run: uv run --project apps/api pytest tests/api
 
       - name: Run linter
