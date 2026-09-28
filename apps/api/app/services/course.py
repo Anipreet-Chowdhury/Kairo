@@ -1,5 +1,6 @@
 from uuid import UUID
 
+from app.core.exceptions import CourseNotFoundError
 from app.db.models.courses import Course
 from app.repositories.course import CourseRepository
 from app.schemas.course import CourseCreate
@@ -20,5 +21,5 @@ class CourseService:
     async def get_course(self, course_id: UUID) -> Course:
         course = await self.repository.get_by_id(course_id)
         if course is None:
-            raise ValueError("Course not found")
+            raise CourseNotFoundError
         return course
