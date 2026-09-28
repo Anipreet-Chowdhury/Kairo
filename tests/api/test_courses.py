@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from app.api.routes.courses import get_course_service
+from app.core.exceptions import CourseNotFoundError
 from app.db.models.courses import Course
 from app.main import app
 from fastapi.testclient import TestClient
@@ -30,7 +31,7 @@ class FakeCourseService:
         course = self.courses.get(course_id)
 
         if course is None:
-            raise ValueError("Course not found")
+            raise CourseNotFoundError
 
         return course
 

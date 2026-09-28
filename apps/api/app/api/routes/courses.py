@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.exceptions import CourseNotFoundError
 from app.db.models.courses import Course
 from app.db.session import get_session
 from app.repositories.course import CourseRepository
@@ -48,7 +49,7 @@ async def get_course(
     try:
         course = await service.get_course(course_id)
         return course
-    except ValueError:
+    except CourseNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Course not found",
