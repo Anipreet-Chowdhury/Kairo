@@ -8,3 +8,19 @@ class OfferingNotFoundError(Exception):
 
 class OfferingAlreadyExistsError(Exception):
     pass
+
+
+class ProfileNotFoundError(Exception):
+    pass
+
+
+class MembershipAlreadyExistsError(Exception):
+    pass
+
+
+class MembershipNotFoundError(Exception):
+    pass
+
+
+class InvalidMembershipTransitionError(Exception):
+    pass
