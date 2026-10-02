@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 import pytest
-from app.api.routes.membership import get_membership_service
+from app.api.routes.membership import get_membership_service, router
 from app.core.exceptions import (
     InvalidMembershipTransitionError,
     MembershipAlreadyExistsError,
@@ -10,10 +10,15 @@ from app.core.exceptions import (
     OfferingNotFoundError,
     ProfileNotFoundError,
 )
+from app.core.security import get_current_user
 from app.db.models.course_membership import CourseMembership
 from app.db.models.enums import MembershipStatus
-from app.main import app
+from app.schemas.auth import AuthenticatedUser
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+TEST_USER_ID = UUID("11111111-1111-1111-1111-111111111111")
+MISSING_USER_ID = UUID("22222222-2222-2222-2222-222222222222")
 
 
 class FakeMembershipService:
@@ -128,58 +133,84 @@ class FakeMembershipService:
         return membership
 
 
+def authenticated_user(user_id: UUID):
+    async def _get_current_user() -> AuthenticatedUser:
+        return AuthenticatedUser(user_id=user_id)
+
+    return _get_current_user
+
+
 @pytest.fixture
 def fake_service() -> FakeMembershipService:
     return FakeMembershipService()
 
 
 @pytest.fixture
-def client(fake_service: FakeMembershipService):
-    app.dependency_overrides[get_membership_service] = lambda: fake_service
+def app(fake_service: FakeMembershipService) -> FastAPI:
+    test_app = FastAPI()
+    test_app.include_router(router)
 
-    with TestClient(app) as test_client:
-        yield test_client
+    test_app.dependency_overrides[get_membership_service] = lambda: fake_service
+    test_app.dependency_overrides[get_current_user] = authenticated_user(TEST_USER_ID)
 
-    app.dependency_overrides.clear()
+    return test_app
+
+
+@pytest.fixture
+def client(app: FastAPI) -> TestClient:
+    return TestClient(app)
 
 
 def test_create_membership(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     assert response.status_code == 201
 
     body = response.json()
 
-    assert body["user_id"] == str(user_id)
+    assert body["user_id"] == str(TEST_USER_ID)
     assert body["offering_id"] == str(offering_id)
     assert body["status"] == MembershipStatus.ACTIVE.value
     assert body["ended_at"] is None
+
+
+def test_create_membership_uses_authenticated_user(
+    client: TestClient,
+    fake_service: FakeMembershipService,
+):
+    offering_id = uuid4()
+
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
+    fake_service.existing_offering_ids.add(offering_id)
+
+    response = client.post(
+        f"/offerings/{offering_id}/memberships/me",
+    )
+
+    assert response.status_code == 201
+    assert response.json()["user_id"] == str(TEST_USER_ID)
 
 
 def test_create_membership_profile_not_found(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
     fake_service.existing_offering_ids.add(offering_id)
 
     response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     assert response.status_code == 404
@@ -190,14 +221,12 @@ def test_create_membership_offering_not_found(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
 
     response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     assert response.status_code == 404
@@ -208,20 +237,17 @@ def test_create_duplicate_membership(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     first_response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     second_response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     assert first_response.status_code == 201
@@ -234,22 +260,38 @@ def test_list_offering_memberships(
     fake_service: FakeMembershipService,
 ):
     offering_id = uuid4()
-    first_user_id = uuid4()
     second_user_id = uuid4()
 
     fake_service.existing_offering_ids.add(offering_id)
-    fake_service.existing_profile_ids.update({first_user_id, second_user_id})
-
-    client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(first_user_id)},
-    )
-    client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(second_user_id)},
+    fake_service.existing_profile_ids.update(
+        {
+            TEST_USER_ID,
+            second_user_id,
+        }
     )
 
-    response = client.get(f"/offerings/{offering_id}/memberships")
+    awaitable_membership_one = CourseMembership(
+        user_id=TEST_USER_ID,
+        offering_id=offering_id,
+        status=MembershipStatus.ACTIVE,
+        joined_at=datetime.now(UTC),
+        ended_at=None,
+    )
+
+    awaitable_membership_two = CourseMembership(
+        user_id=second_user_id,
+        offering_id=offering_id,
+        status=MembershipStatus.ACTIVE,
+        joined_at=datetime.now(UTC),
+        ended_at=None,
+    )
+
+    fake_service.memberships[(TEST_USER_ID, offering_id)] = awaitable_membership_one
+    fake_service.memberships[(second_user_id, offering_id)] = awaitable_membership_two
+
+    response = client.get(
+        f"/offerings/{offering_id}/memberships",
+    )
 
     assert response.status_code == 200
 
@@ -257,7 +299,7 @@ def test_list_offering_memberships(
 
     assert len(body) == 2
     assert {membership["user_id"] for membership in body} == {
-        str(first_user_id),
+        str(TEST_USER_ID),
         str(second_user_id),
     }
 
@@ -267,9 +309,12 @@ def test_list_empty_offering_memberships(
     fake_service: FakeMembershipService,
 ):
     offering_id = uuid4()
+
     fake_service.existing_offering_ids.add(offering_id)
 
-    response = client.get(f"/offerings/{offering_id}/memberships")
+    response = client.get(
+        f"/offerings/{offering_id}/memberships",
+    )
 
     assert response.status_code == 200
     assert response.json() == []
@@ -280,7 +325,9 @@ def test_list_nonexistent_offering_memberships(
 ):
     offering_id = uuid4()
 
-    response = client.get(f"/offerings/{offering_id}/memberships")
+    response = client.get(
+        f"/offerings/{offering_id}/memberships",
+    )
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Offering not found"
@@ -290,23 +337,34 @@ def test_list_user_memberships(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     first_offering_id = uuid4()
     second_offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
-    fake_service.existing_offering_ids.update({first_offering_id, second_offering_id})
-
-    client.post(
-        f"/offerings/{first_offering_id}/memberships",
-        json={"user_id": str(user_id)},
-    )
-    client.post(
-        f"/offerings/{second_offering_id}/memberships",
-        json={"user_id": str(user_id)},
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
+    fake_service.existing_offering_ids.update(
+        {
+            first_offering_id,
+            second_offering_id,
+        }
     )
 
-    response = client.get(f"/users/{user_id}/memberships")
+    fake_service.memberships[(TEST_USER_ID, first_offering_id)] = CourseMembership(
+        user_id=TEST_USER_ID,
+        offering_id=first_offering_id,
+        status=MembershipStatus.ACTIVE,
+        joined_at=datetime.now(UTC),
+        ended_at=None,
+    )
+
+    fake_service.memberships[(TEST_USER_ID, second_offering_id)] = CourseMembership(
+        user_id=TEST_USER_ID,
+        offering_id=second_offering_id,
+        status=MembershipStatus.ACTIVE,
+        joined_at=datetime.now(UTC),
+        ended_at=None,
+    )
+
+    response = client.get("/users/me/memberships")
 
     assert response.status_code == 200
 
@@ -323,21 +381,23 @@ def test_list_empty_user_memberships(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
 
-    response = client.get(f"/users/{user_id}/memberships")
+    response = client.get("/users/me/memberships")
 
     assert response.status_code == 200
     assert response.json() == []
 
 
 def test_list_nonexistent_user_memberships(
-    client: TestClient,
+    app: FastAPI,
+    fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
+    app.dependency_overrides[get_current_user] = authenticated_user(MISSING_USER_ID)
 
-    response = client.get(f"/users/{user_id}/memberships")
+    client = TestClient(app)
+
+    response = client.get("/users/me/memberships")
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Profile not found"
@@ -347,24 +407,28 @@ def test_get_membership(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
-    client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+    fake_service.memberships[(TEST_USER_ID, offering_id)] = CourseMembership(
+        user_id=TEST_USER_ID,
+        offering_id=offering_id,
+        status=MembershipStatus.ACTIVE,
+        joined_at=datetime.now(UTC),
+        ended_at=None,
     )
 
-    response = client.get(f"/offerings/{offering_id}/memberships/{user_id}")
+    response = client.get(
+        f"/offerings/{offering_id}/memberships/me",
+    )
 
     assert response.status_code == 200
 
     body = response.json()
 
-    assert body["user_id"] == str(user_id)
+    assert body["user_id"] == str(TEST_USER_ID)
     assert body["offering_id"] == str(offering_id)
     assert body["status"] == MembershipStatus.ACTIVE.value
 
@@ -373,13 +437,14 @@ def test_get_nonexistent_membership(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
-    response = client.get(f"/offerings/{offering_id}/memberships/{user_id}")
+    response = client.get(
+        f"/offerings/{offering_id}/memberships/me",
+    )
 
     assert response.status_code == 404
     assert response.json()["detail"] == "Membership not found"
@@ -389,21 +454,19 @@ def test_update_membership_status(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     create_response = client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     assert create_response.status_code == 201
 
     response = client.patch(
-        f"/offerings/{offering_id}/memberships/{user_id}",
+        f"/offerings/{offering_id}/memberships/me",
         json={"status": MembershipStatus.COMPLETED.value},
     )
 
@@ -411,7 +474,7 @@ def test_update_membership_status(
 
     body = response.json()
 
-    assert body["user_id"] == str(user_id)
+    assert body["user_id"] == str(TEST_USER_ID)
     assert body["offering_id"] == str(offering_id)
     assert body["status"] == MembershipStatus.COMPLETED.value
     assert body["ended_at"] is not None
@@ -421,69 +484,64 @@ def test_update_membership_active_to_active_rejected(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     response = client.patch(
-        f"/offerings/{offering_id}/memberships/{user_id}",
+        f"/offerings/{offering_id}/memberships/me",
         json={"status": MembershipStatus.ACTIVE.value},
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "Invalid membership status transition"
+    assert response.json()["detail"] == ("Invalid membership status transition")
 
 
 def test_update_terminal_membership_rejected(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     client.post(
-        f"/offerings/{offering_id}/memberships",
-        json={"user_id": str(user_id)},
+        f"/offerings/{offering_id}/memberships/me",
     )
 
     first_response = client.patch(
-        f"/offerings/{offering_id}/memberships/{user_id}",
+        f"/offerings/{offering_id}/memberships/me",
         json={"status": MembershipStatus.COMPLETED.value},
     )
 
     assert first_response.status_code == 200
 
     second_response = client.patch(
-        f"/offerings/{offering_id}/memberships/{user_id}",
+        f"/offerings/{offering_id}/memberships/me",
         json={"status": MembershipStatus.WITHDRAWN.value},
     )
 
     assert second_response.status_code == 409
-    assert second_response.json()["detail"] == "Invalid membership status transition"
+    assert second_response.json()["detail"] == ("Invalid membership status transition")
 
 
 def test_update_nonexistent_membership(
     client: TestClient,
     fake_service: FakeMembershipService,
 ):
-    user_id = uuid4()
     offering_id = uuid4()
 
-    fake_service.existing_profile_ids.add(user_id)
+    fake_service.existing_profile_ids.add(TEST_USER_ID)
     fake_service.existing_offering_ids.add(offering_id)
 
     response = client.patch(
-        f"/offerings/{offering_id}/memberships/{user_id}",
+        f"/offerings/{offering_id}/memberships/me",
         json={"status": MembershipStatus.WITHDRAWN.value},
     )
 
