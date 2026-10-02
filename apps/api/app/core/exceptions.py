@@ -14,6 +14,10 @@ class ProfileNotFoundError(Exception):
     pass
 
 
+class ProfileAlreadyExistsError(Exception):
+    pass
+
+
 class MembershipAlreadyExistsError(Exception):
     pass
 

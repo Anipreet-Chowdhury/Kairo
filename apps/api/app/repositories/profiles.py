@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.profile import Profile
+from app.schemas.profile import ProfileCreate
 
 
 class ProfileRepository:
@@ -18,3 +19,12 @@ class ProfileRepository:
         result = await self.session.execute(statement)
 
         return result.scalar_one_or_none()
+
+    async def create(self, user_id: UUID, data: ProfileCreate) -> Profile:
+        profile = Profile(user_id=user_id, **data.model_dump())
+
+        self.session.add(profile)
+        await self.session.commit()
+        await self.session.refresh(profile)
+
+        return profile
