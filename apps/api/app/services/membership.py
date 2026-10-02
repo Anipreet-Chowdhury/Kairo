@@ -1,6 +1,8 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.exceptions import (
     InvalidMembershipTransitionError,
     MembershipAlreadyExistsError,
@@ -8,6 +10,7 @@ from app.core.exceptions import (
     OfferingNotFoundError,
     ProfileNotFoundError,
 )
+from app.db.errors import is_unique_violation
 from app.db.models.course_membership import CourseMembership
 from app.db.models.enums import MembershipStatus
 from app.repositories.membership import MembershipRepository
@@ -36,12 +39,20 @@ class MembershipService:
         if offering is None:
             raise OfferingNotFoundError
         membership_exists = await self.membership_repository.get_membership(
-            user_id, offering_id
+            user_id=user_id, offering_id=offering_id
         )
         if membership_exists:
             raise MembershipAlreadyExistsError
-        new_membership = await self.membership_repository.create(user_id, offering_id)
-        return new_membership
+
+        try:
+            return await self.membership_repository.create(
+                user_id=user_id, offering_id=offering_id
+            )
+
+        except IntegrityError as exc:
+            if is_unique_violation(exc):
+                raise MembershipAlreadyExistsError from exc
+            raise
 
     async def list_offering_memberships(
         self, offering_id: UUID
@@ -69,7 +80,7 @@ class MembershipService:
         if offering is None:
             raise OfferingNotFoundError
         membership = await self.membership_repository.get_membership(
-            user_id, offering_id
+            user_id=user_id, offering_id=offering_id
         )
         if membership is None:
             raise MembershipNotFoundError
@@ -86,13 +97,17 @@ class MembershipService:
             MembershipStatus.WITHDRAWN,
             MembershipStatus.REMOVED,
         }
-        membership = await self.get_membership(offering_id, user_id)
+        membership = await self.get_membership(offering_id=offering_id, user_id=user_id)
         if (
             membership.status != MembershipStatus.ACTIVE
             or new_status not in allowed_terminal_statuses
         ):
             raise InvalidMembershipTransitionError
+
         updated_membership = await self.membership_repository.update_status(
             membership, new_status, datetime.now(UTC)
         )
+        if updated_membership is None:
+            raise InvalidMembershipTransitionError
+
         return updated_membership

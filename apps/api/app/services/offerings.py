@@ -1,10 +1,13 @@
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.exceptions import (
     CourseNotFoundError,
     OfferingAlreadyExistsError,
     OfferingNotFoundError,
 )
+from app.db.errors import is_unique_violation
 from app.db.models.course_offering import CourseOffering
 from app.repositories.course import CourseRepository
 from app.repositories.offerings import OfferingRepository
@@ -31,8 +34,13 @@ class OfferingService:
         )
         if offering_exists:
             raise OfferingAlreadyExistsError
-        new_offering = await self.offering_repository.create(course_id, data)
-        return new_offering
+        try:
+            return await self.offering_repository.create(course_id, data)
+
+        except IntegrityError as exc:
+            if is_unique_violation(exc):
+                raise OfferingAlreadyExistsError from exc
+            raise
 
     async def list_course_offerings(self, course_id: UUID) -> list[CourseOffering]:
         course = await self.course_repository.get_by_id(course_id)

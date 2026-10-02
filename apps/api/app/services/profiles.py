@@ -1,6 +1,9 @@
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
+
 from app.core.exceptions import ProfileAlreadyExistsError, ProfileNotFoundError
+from app.db.errors import is_unique_violation
 from app.db.models.profile import Profile
 from app.repositories.profiles import ProfileRepository
 from app.schemas.profile import ProfileCreate
@@ -20,5 +23,10 @@ class ProfileService:
         existing_profile = await self.profile_repository.get_by_id(user_id)
         if existing_profile is not None:
             raise ProfileAlreadyExistsError
-        new_profile = await self.profile_repository.create(user_id, data)
-        return new_profile
+
+        try:
+            return await self.profile_repository.create(user_id, data)
+        except IntegrityError as exc:
+            if is_unique_violation(exc):
+                raise ProfileAlreadyExistsError from exc
+            raise

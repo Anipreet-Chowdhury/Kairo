@@ -15,7 +15,7 @@ class CourseRepository:
         new_course = Course(**data.model_dump())
 
         self.session.add(new_course)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(new_course)
 
         return new_course

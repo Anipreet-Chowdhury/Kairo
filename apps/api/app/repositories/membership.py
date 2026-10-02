@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.course_membership import CourseMembership
@@ -16,7 +16,7 @@ class MembershipRepository:
         new_membership = CourseMembership(offering_id=offering_id, user_id=user_id)
 
         self.session.add(new_membership)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(new_membership)
 
         return new_membership
@@ -47,10 +47,19 @@ class MembershipRepository:
 
     async def update_status(
         self, membership: CourseMembership, status: MembershipStatus, ended_at: datetime
-    ) -> CourseMembership:
-        membership.status = status
-        membership.ended_at = ended_at
-
-        await self.session.commit()
-        await self.session.refresh(membership)
-        return membership
+    ) -> CourseMembership | None:
+        statement = (
+            update(CourseMembership)
+            .where(
+                CourseMembership.user_id == membership.user_id,
+                CourseMembership.offering_id == membership.offering_id,
+                CourseMembership.status == MembershipStatus.ACTIVE,
+            )
+            .values(
+                status=status,
+                ended_at=ended_at,
+            )
+            .returning(CourseMembership)
+        )
+        result = await self.session.execute(statement)
+        return result.scalar_one_or_none()

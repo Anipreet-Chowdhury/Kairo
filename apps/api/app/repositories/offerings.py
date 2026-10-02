@@ -16,7 +16,7 @@ class OfferingRepository:
         new_offering = CourseOffering(course_id=course_id, **data.model_dump())
 
         self.session.add(new_offering)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(new_offering)
 
         return new_offering
