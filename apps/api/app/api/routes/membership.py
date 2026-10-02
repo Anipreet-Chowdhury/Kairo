@@ -11,12 +11,13 @@ from app.core.exceptions import (
     OfferingNotFoundError,
     ProfileNotFoundError,
 )
+from app.core.security import get_current_user
 from app.db.session import get_session
 from app.repositories.membership import MembershipRepository
 from app.repositories.offerings import OfferingRepository
 from app.repositories.profiles import ProfileRepository
+from app.schemas.auth import AuthenticatedUser
 from app.schemas.membership import (
-    MembershipCreate,
     MembershipResponse,
     MembershipUpdate,
 )
@@ -37,17 +38,19 @@ def get_membership_service(
 
 
 @router.post(
-    "/offerings/{offering_id}/memberships",
+    "/offerings/{offering_id}/memberships/me",
     response_model=MembershipResponse,
     status_code=status.HTTP_201_CREATED,
 )
 async def create_membership(
     offering_id: UUID,
-    data: MembershipCreate,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[MembershipService, Depends(get_membership_service)],
 ) -> MembershipResponse:
     try:
-        membership = await service.create_membership(data.user_id, offering_id)
+        membership = await service.create_membership(
+            user_id=current_user.user_id, offering_id=offering_id
+        )
         return membership
     except ProfileNotFoundError:
         raise HTTPException(
@@ -70,6 +73,7 @@ async def create_membership(
 )
 async def list_offering_memberships(
     offering_id: UUID,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[MembershipService, Depends(get_membership_service)],
 ) -> list[MembershipResponse]:
     try:
@@ -82,13 +86,13 @@ async def list_offering_memberships(
         ) from None
 
 
-@router.get("/users/{user_id}/memberships", response_model=list[MembershipResponse])
+@router.get("/users/me/memberships", response_model=list[MembershipResponse])
 async def list_user_memberships(
-    user_id: UUID,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     service: Annotated[MembershipService, Depends(get_membership_service)],
 ) -> list[MembershipResponse]:
     try:
-        memberships = await service.list_user_memberships(user_id)
+        memberships = await service.list_user_memberships(user_id=current_user.user_id)
         return memberships
     except ProfileNotFoundError:
         raise HTTPException(
@@ -98,15 +102,17 @@ async def list_user_memberships(
 
 
 @router.get(
-    "/offerings/{offering_id}/memberships/{user_id}", response_model=MembershipResponse
+    "/offerings/{offering_id}/memberships/me", response_model=MembershipResponse
 )
 async def get_membership(
-    user_id: UUID,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     offering_id: UUID,
     service: Annotated[MembershipService, Depends(get_membership_service)],
 ) -> MembershipResponse:
     try:
-        membership = await service.get_membership(offering_id, user_id)
+        membership = await service.get_membership(
+            offering_id, user_id=current_user.user_id
+        )
         return membership
     except ProfileNotFoundError:
         raise HTTPException(
@@ -126,20 +132,20 @@ async def get_membership(
 
 
 @router.patch(
-    "/offerings/{offering_id}/memberships/{user_id}",
+    "/offerings/{offering_id}/memberships/me",
     response_model=MembershipResponse,
 )
 async def update_membership(
     offering_id: UUID,
-    user_id: UUID,
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
     data: MembershipUpdate,
     service: Annotated[MembershipService, Depends(get_membership_service)],
 ) -> MembershipResponse:
     try:
         return await service.update_membership_status(
-            offering_id,
-            user_id,
-            data.status,
+            offering_id=offering_id,
+            user_id=current_user.user_id,
+            new_status=data.status,
         )
     except ProfileNotFoundError:
         raise HTTPException(
