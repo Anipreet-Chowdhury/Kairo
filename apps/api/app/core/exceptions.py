@@ -28,3 +28,7 @@ class MembershipNotFoundError(Exception):
 
 class InvalidMembershipTransitionError(Exception):
     pass
+
+
+class InvalidUpdateError(Exception):
+    pass

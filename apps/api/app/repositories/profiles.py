@@ -24,7 +24,7 @@ class ProfileRepository:
         profile = Profile(user_id=user_id, **data.model_dump())
 
         self.session.add(profile)
-        await self.session.commit()
+        await self.session.flush()
         await self.session.refresh(profile)
 
         return profile
