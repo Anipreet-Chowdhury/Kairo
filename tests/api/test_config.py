@@ -4,6 +4,7 @@ from app.core.config import Settings
 def test_settings_defaults() -> None:
     settings = Settings(
         database_url="postgresql+asyncpg://user:password@localhost:5432/kairo",
+        supabase_url="https://your-supabase-project.supabase.co",
         _env_file=None,
     )
 
