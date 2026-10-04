@@ -22,3 +22,18 @@ class MembershipStatus(StrEnum):
     COMPLETED = "completed"
     WITHDRAWN = "withdrawn"
     REMOVED = "removed"
+
+
+class AssessmentType(StrEnum):
+    EXAM = "exam"
+    TEST = "test"
+    QUIZ = "quiz"
+    ASSIGNMENT = "assignment"
+    PROGRAMMING_ASSIGNMENT = "programming_assignment"
+    LAB = "lab"
+    REPORT = "report"
+    PROJECT = "project"
+    PROJECT_CHECKPOINT = "project_checkpoint"
+    PRESENTATION = "presentation"
+    DISCUSSION = "discussion"
+    OTHER = "other"
